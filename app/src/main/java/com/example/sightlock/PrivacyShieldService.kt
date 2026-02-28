@@ -264,6 +264,10 @@ class PrivacyShieldService : LifecycleService() {
     private fun showOverlay() {
         if (overlayView == null) return
 
+        val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -271,16 +275,33 @@ class PrivacyShieldService : LifecycleService() {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            flags,
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.CENTER
 
+        // API 31+ Glassmorphism Blur
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+            
+            // Animate blur in
+            val blurAnim = android.animation.ValueAnimator.ofInt(0, 50)
+            blurAnim.duration = 300
+            blurAnim.addUpdateListener { animator ->
+                try {
+                    params.setBlurBehindRadius(animator.animatedValue as Int)
+                    if (isOverlayShowing) windowManager?.updateViewLayout(overlayView, params)
+                } catch (e: Exception) {
+                    // Ignore transient layout updates errors
+                }
+            }
+            blurAnim.start()
+        }
+
         try {
             windowManager?.addView(overlayView, params)
             isOverlayShowing = true
+            isHiding = false
             startOverlayAnimations()
         } catch (e: Exception) {
             Log.e(TAG, "Error adding overlay: ${e.message}")
@@ -289,6 +310,17 @@ class PrivacyShieldService : LifecycleService() {
 
     private fun startOverlayAnimations() {
         overlayView?.let { root ->
+            // Background dim/blur fade in
+            val bg = root.background
+            if (bg != null) {
+                val alphaAnim = android.animation.ValueAnimator.ofInt(0, 255)
+                alphaAnim.duration = 300
+                alphaAnim.addUpdateListener { animator ->
+                    bg.alpha = animator.animatedValue as Int
+                }
+                alphaAnim.start()
+            }
+
             // Pulse the shield glow
             root.findViewById<View>(R.id.shield_glow)?.let { glow ->
                 val pulseAnim = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.pulse_glow)
@@ -300,6 +332,12 @@ class PrivacyShieldService : LifecycleService() {
                 val bounceAnim = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.scale_in_bounce)
                 card.startAnimation(bounceAnim)
             }
+
+            // Slide text up
+            val slideUpAnim = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.slide_in_up)
+            root.findViewById<View>(R.id.alert_header)?.startAnimation(slideUpAnim)
+            root.findViewById<View>(R.id.main_message)?.startAnimation(slideUpAnim)
+            root.findViewById<View>(R.id.sub_message)?.startAnimation(slideUpAnim)
 
             // Blink the status dot
             root.findViewById<View>(R.id.status_dot)?.let { dot ->
@@ -313,14 +351,66 @@ class PrivacyShieldService : LifecycleService() {
         }
     }
 
+    private var isHiding = false
+
     private fun hideOverlay() {
-        try {
-            if (isOverlayShowing) {
-                windowManager?.removeView(overlayView)
-                isOverlayShowing = false
+        if (!isOverlayShowing || isHiding) return
+        isHiding = true
+
+        executeSecureTransitionAndHide()
+    }
+
+    private fun executeSecureTransitionAndHide() {
+        overlayView?.let { root ->
+            // Stage 1: Threat Cleared (Red -> Green)
+            root.findViewById<android.widget.ImageView>(R.id.shield_icon)?.setImageResource(R.drawable.ic_shield_secure)
+            root.findViewById<View>(R.id.shield_glow)?.setBackgroundResource(R.drawable.shield_icon_circle_green)
+            
+            root.findViewById<android.widget.TextView>(R.id.alert_header)?.apply {
+                text = "SECURE"
+                setTextColor(android.graphics.Color.parseColor("#22C55E")) // Green
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error removing overlay: ${e.message}")
+            root.findViewById<android.widget.TextView>(R.id.main_message)?.text = "User verified"
+            root.findViewById<android.widget.TextView>(R.id.sub_message)?.text = "Privacy threat cleared.\nReturning to normal."
+
+            // Quick pulse on the green transition
+            val bounceAnim = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.scale_in_bounce)
+            root.findViewById<View>(R.id.shield_glow)?.startAnimation(bounceAnim)
+
+            // Stage 2: Wait 800ms, then animate out
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                val card = root.findViewById<View>(R.id.warning_card)
+                val fadeOutAnim = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.fade_out_shrink)
+                
+                // Fade out background
+                val bg = root.background
+                if (bg != null) {
+                    val alphaAnim = android.animation.ValueAnimator.ofInt(255, 0)
+                    alphaAnim.duration = 300
+                    alphaAnim.addUpdateListener { animator ->
+                        bg.alpha = animator.animatedValue as Int
+                    }
+                    alphaAnim.start()
+                }
+
+                fadeOutAnim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
+                    override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+                    override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
+                    override fun onAnimationEnd(animation: android.view.animation.Animation?) {
+                        try {
+                            windowManager?.removeView(overlayView)
+                            isOverlayShowing = false
+                            isHiding = false
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error removing overlay: ${e.message}")
+                        }
+                    }
+                })
+                card?.startAnimation(fadeOutAnim)
+            }, 800)
+        } ?: run {
+            isOverlayShowing = false
+            isHiding = false
         }
     }
 
