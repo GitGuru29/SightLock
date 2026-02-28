@@ -4,11 +4,18 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.PixelFormat
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -33,11 +40,26 @@ class PrivacyShieldService : LifecycleService() {
     private var overlayView: View? = null
     private var isOverlayShowing = false
 
+    // Battery optimization: detection state
+    private var isDetectionPaused = false
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var imageAnalyzer: ImageAnalysis? = null
+    private var faceAnalyzer: FaceAnalyzer? = null
+
+    // Battery optimization: proximity sensor
+    private lateinit var sensorManager: SensorManager
+    private var proximitySensor: Sensor? = null
+    private var isNearProximity = false
+
     companion object {
         private const val TAG = "PrivacyShieldService"
         private const val NOTIFICATION_CHANNEL_ID = "privacy_shield_channel"
         private const val NOTIFICATION_ID = 1
-        
+
+        // Throttle intervals (ms)
+        private const val NORMAL_ANALYSIS_INTERVAL_MS = 500L    // 2 FPS
+        private const val OVERLAY_ANALYSIS_INTERVAL_MS = 2000L  // 0.5 FPS when overlay is already showing
+
         fun startService(context: Context) {
             val intent = Intent(context, PrivacyShieldService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -53,17 +75,77 @@ class PrivacyShieldService : LifecycleService() {
         }
     }
 
+    // ---------- Screen state receiver ----------
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    Log.d(TAG, "Screen OFF — pausing detection")
+                    pauseDetection()
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    Log.d(TAG, "Screen ON — resuming detection")
+                    resumeDetection()
+                }
+            }
+        }
+    }
+
+    // ---------- Proximity sensor listener ----------
+    private val proximityListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            val maxRange = proximitySensor?.maximumRange ?: 5f
+            val wasNear = isNearProximity
+            isNearProximity = event.values[0] < maxRange
+
+            if (isNearProximity && !wasNear) {
+                Log.d(TAG, "Proximity NEAR — pausing detection (phone pocketed/face-down)")
+                pauseDetection()
+            } else if (!isNearProximity && wasNear) {
+                Log.d(TAG, "Proximity FAR — resuming detection")
+                resumeDetection()
+            }
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
+
     override fun onCreate() {
         super.onCreate()
         cameraExecutor = Executors.newSingleThreadExecutor()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createOverlayView()
+
+        // Register screen state receiver
+        val screenFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        registerReceiver(screenStateReceiver, screenFilter)
+
+        // Register proximity sensor
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+        proximitySensor?.let {
+            sensorManager.registerListener(
+                proximityListener, it, SensorManager.SENSOR_DELAY_NORMAL
+            )
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         startForeground(NOTIFICATION_ID, createNotification())
-        startCamera()
+
+        // Only start camera if the screen is currently on
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (powerManager.isInteractive && !isNearProximity) {
+            startCamera()
+        } else {
+            Log.d(TAG, "Screen off or pocket — deferring camera start")
+            isDetectionPaused = true
+        }
+
         return Service.START_STICKY
     }
 
@@ -71,6 +153,38 @@ class PrivacyShieldService : LifecycleService() {
         super.onDestroy()
         cameraExecutor.shutdown()
         removeOverlay()
+
+        // Unregister screen receiver
+        try {
+            unregisterReceiver(screenStateReceiver)
+        } catch (e: Exception) {
+            Log.w(TAG, "Screen receiver already unregistered")
+        }
+
+        // Unregister proximity sensor
+        sensorManager.unregisterListener(proximityListener)
+
+        // Release camera
+        cameraProvider?.unbindAll()
+    }
+
+    // ---------- Detection pause / resume ----------
+    private fun pauseDetection() {
+        if (isDetectionPaused) return
+        isDetectionPaused = true
+        cameraProvider?.unbindAll()
+        Log.d(TAG, "Detection PAUSED — camera released")
+    }
+
+    private fun resumeDetection() {
+        if (!isDetectionPaused) return
+        isDetectionPaused = false
+
+        // Don't resume if still near proximity
+        if (isNearProximity) return
+
+        startCamera()
+        Log.d(TAG, "Detection RESUMED — camera restarted")
     }
 
     private fun createNotification(): Notification {
@@ -87,7 +201,7 @@ class PrivacyShieldService : LifecycleService() {
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("Privacy Shield Active")
             .setContentText("Monitoring for peeking eyes...")
-            .setSmallIcon(android.R.drawable.ic_secure) // Replace with your app icon
+            .setSmallIcon(android.R.drawable.ic_secure)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
     }
@@ -97,22 +211,25 @@ class PrivacyShieldService : LifecycleService() {
 
         cameraProviderFuture.addListener({
             try {
-                val cameraProvider = cameraProviderFuture.get()
+                val provider = cameraProviderFuture.get()
+                cameraProvider = provider
 
-                val imageAnalyzer = ImageAnalysis.Builder()
+                faceAnalyzer = FaceAnalyzer(NORMAL_ANALYSIS_INTERVAL_MS) { facesCount ->
+                    handleFacesDetected(facesCount)
+                }
+
+                imageAnalyzer = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .build()
                     .also {
-                        it.setAnalyzer(cameraExecutor, FaceAnalyzer { facesCount ->
-                            handleFacesDetected(facesCount)
-                        })
+                        it.setAnalyzer(cameraExecutor, faceAnalyzer!!)
                     }
 
                 val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
 
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(
-                    this@PrivacyShieldService, cameraSelector, imageAnalyzer
+                provider.unbindAll()
+                provider.bindToLifecycle(
+                    this@PrivacyShieldService, cameraSelector, imageAnalyzer!!
                 )
 
             } catch (exc: Exception) {
@@ -122,32 +239,33 @@ class PrivacyShieldService : LifecycleService() {
     }
 
     private fun handleFacesDetected(facesCount: Int) {
-        // Must run on main thread to manipulate UI
         ContextCompat.getMainExecutor(this@PrivacyShieldService).execute {
-            if (facesCount > 1) { // More than 1 person looking at the screen
+            if (facesCount > 1) {
                 if (!isOverlayShowing) {
                     showOverlay()
+                    // Slow down detection while overlay is showing — save battery
+                    faceAnalyzer?.setInterval(OVERLAY_ANALYSIS_INTERVAL_MS)
                 }
             } else {
                 if (isOverlayShowing) {
                     hideOverlay()
+                    // Speed detection back up
+                    faceAnalyzer?.setInterval(NORMAL_ANALYSIS_INTERVAL_MS)
                 }
             }
         }
     }
 
     private fun createOverlayView() {
-        // Inflate a simple layout. A Service is a Context but not a themed UI Context.
         val themedContext = android.view.ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault)
         overlayView = LayoutInflater.from(themedContext).inflate(R.layout.overlay_privacy_shield, null).apply {
-            setBackgroundColor(android.graphics.Color.parseColor("#E6000000")) // 90% black
-            // You can add a text view here saying "Peeking Detected!"
+            setBackgroundColor(android.graphics.Color.parseColor("#E6000000"))
         }
     }
 
     private fun showOverlay() {
         if (overlayView == null) return
-        
+
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -155,10 +273,10 @@ class PrivacyShieldService : LifecycleService() {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 WindowManager.LayoutParams.TYPE_PHONE,
+            // Removed FLAG_KEEP_SCREEN_ON — it prevented the screen from sleeping
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         )
         params.gravity = Gravity.CENTER
@@ -167,7 +285,7 @@ class PrivacyShieldService : LifecycleService() {
             windowManager?.addView(overlayView, params)
             isOverlayShowing = true
         } catch (e: Exception) {
-            Log.e(TAG, "Error adding overlay: \${e.message}")
+            Log.e(TAG, "Error adding overlay: ${e.message}")
         }
     }
 
@@ -178,23 +296,46 @@ class PrivacyShieldService : LifecycleService() {
                 isOverlayShowing = false
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error removing overlay: \${e.message}")
+            Log.e(TAG, "Error removing overlay: ${e.message}")
         }
     }
-    
+
     private fun removeOverlay() {
         hideOverlay()
         overlayView = null
     }
 
-    private class FaceAnalyzer(private val onFacesDetected: (Int) -> Unit) : ImageAnalysis.Analyzer {
+    // ---------- Throttled Face Analyzer ----------
+    private class FaceAnalyzer(
+        initialIntervalMs: Long,
+        private val onFacesDetected: (Int) -> Unit
+    ) : ImageAnalysis.Analyzer {
+
         private val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
             .build()
         private val detector = FaceDetection.getClient(options)
 
+        @Volatile
+        private var analysisIntervalMs: Long = initialIntervalMs
+        private var lastAnalyzedTimestamp = 0L
+
+        fun setInterval(intervalMs: Long) {
+            analysisIntervalMs = intervalMs
+            Log.d(TAG, "Analysis interval set to ${intervalMs}ms")
+        }
+
         @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
         override fun analyze(imageProxy: androidx.camera.core.ImageProxy) {
+            val currentTimestamp = System.currentTimeMillis()
+
+            // Throttle: skip frames if we analyzed too recently
+            if (currentTimestamp - lastAnalyzedTimestamp < analysisIntervalMs) {
+                imageProxy.close()
+                return
+            }
+            lastAnalyzedTimestamp = currentTimestamp
+
             val mediaImage = imageProxy.image
             if (mediaImage != null) {
                 val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
