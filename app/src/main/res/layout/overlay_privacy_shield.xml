@@ -1,18 +1,145 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/overlay_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#E6000000">
+    android:background="@drawable/overlay_background_gradient">
 
-    <!-- Privacy Shield Indicator -->
-    <TextView
+    <!-- Central warning content -->
+    <LinearLayout
+        android:id="@+id/warning_card"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:text="Privacy Shield Active\nScreen Blocked"
-        android:textAlignment="center"
-        android:textColor="#FFFFFF"
-        android:textSize="24sp"
-        android:textStyle="bold" />
+        android:background="@drawable/warning_card_background"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingHorizontal="48dp"
+        android:paddingTop="40dp"
+        android:paddingBottom="32dp">
+
+        <!-- Pulsing shield icon -->
+        <FrameLayout
+            android:layout_width="120dp"
+            android:layout_height="120dp"
+            android:layout_gravity="center_horizontal">
+
+            <!-- Glow ring background -->
+            <View
+                android:id="@+id/shield_glow"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/shield_icon_circle" />
+
+            <!-- Shield vector icon -->
+            <ImageView
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:layout_gravity="center"
+                android:contentDescription="Privacy shield warning"
+                android:src="@drawable/ic_shield_warning" />
+        </FrameLayout>
+
+        <!-- Spacing -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="24dp" />
+
+        <!-- Alert header -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.15"
+            android:text="⚠ PRIVACY THREAT"
+            android:textColor="#FFEF4444"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <!-- Spacing -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="8dp" />
+
+        <!-- Main message -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-light"
+            android:text="Screen Locked"
+            android:textColor="#FFFFFF"
+            android:textSize="32sp" />
+
+        <!-- Spacing -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="12dp" />
+
+        <!-- Sub message -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif"
+            android:text="Unauthorized viewer detected.\nContent hidden for your privacy."
+            android:textAlignment="center"
+            android:textColor="#99FFFFFF"
+            android:textSize="14sp"
+            android:lineSpacingExtra="4dp" />
+
+        <!-- Spacing -->
+        <View
+            android:layout_width="0dp"
+            android:layout_height="24dp" />
+
+        <!-- Status indicator -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- Blinking dot -->
+            <View
+                android:id="@+id/status_dot"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:background="@drawable/status_dot" />
+
+            <View
+                android:layout_width="8dp"
+                android:layout_height="0dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif"
+                android:letterSpacing="0.08"
+                android:text="SightLock Active"
+                android:textColor="#80FFFFFF"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Bottom accent line -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="2dp"
+        android:layout_gravity="bottom"
+        android:layout_marginBottom="80dp"
+        android:layout_marginHorizontal="48dp"
+        android:background="@drawable/bottom_line_gradient" />
+
+    <!-- Bottom brand text -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="48dp"
+        android:fontFamily="sans-serif-light"
+        android:letterSpacing="0.25"
+        android:text="SIGHTLOCK"
+        android:textColor="#40FFFFFF"
+        android:textSize="12sp" />
 
 </FrameLayout>
