@@ -33,6 +33,7 @@
 
             <!-- Shield vector icon -->
             <ImageView
+                android:id="@+id/shield_icon"
                 android:layout_width="48dp"
                 android:layout_height="48dp"
                 android:layout_gravity="center"
@@ -47,6 +48,7 @@
 
         <!-- Alert header -->
         <TextView
+            android:id="@+id/alert_header"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-medium"
@@ -63,6 +65,7 @@
 
         <!-- Main message -->
         <TextView
+            android:id="@+id/main_message"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif-light"
@@ -77,6 +80,7 @@
 
         <!-- Sub message -->
         <TextView
+            android:id="@+id/sub_message"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:fontFamily="sans-serif"
