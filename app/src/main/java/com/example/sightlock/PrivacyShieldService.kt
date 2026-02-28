@@ -46,6 +46,10 @@ class PrivacyShieldService : LifecycleService() {
     private var imageAnalyzer: ImageAnalysis? = null
     private var faceAnalyzer: FaceAnalyzer? = null
 
+    // Face embedding engine for owner recognition
+    private lateinit var embeddingEngine: FaceEmbeddingEngine
+    private var ownerEmbedding: FloatArray? = null
+
     // Battery optimization: proximity sensor
     private lateinit var sensorManager: SensorManager
     private var proximitySensor: Sensor? = null
@@ -116,6 +120,11 @@ class PrivacyShieldService : LifecycleService() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createOverlayView()
 
+        // Load owner face embedding
+        embeddingEngine = FaceEmbeddingEngine(this)
+        ownerEmbedding = OwnerFaceStore.loadEmbedding(this)
+        Log.d(TAG, "Owner embedding loaded: ${ownerEmbedding != null}")
+
         // Register screen state receiver
         val screenFilter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
@@ -152,6 +161,7 @@ class PrivacyShieldService : LifecycleService() {
     override fun onDestroy() {
         super.onDestroy()
         cameraExecutor.shutdown()
+        embeddingEngine.close()
         removeOverlay()
 
         // Unregister screen receiver
@@ -215,8 +225,12 @@ class PrivacyShieldService : LifecycleService() {
                 val provider = cameraProviderFuture.get()
                 cameraProvider = provider
 
-                faceAnalyzer = FaceAnalyzer(NORMAL_ANALYSIS_INTERVAL_MS) { facesCount ->
-                    handleFacesDetected(facesCount)
+                faceAnalyzer = FaceAnalyzer(
+                    initialIntervalMs = NORMAL_ANALYSIS_INTERVAL_MS,
+                    ownerEmbedding = ownerEmbedding,
+                    embeddingEngine = embeddingEngine
+                ) { isThreat ->
+                    handleThreatDetected(isThreat)
                 }
 
                 imageAnalyzer = ImageAnalysis.Builder()
@@ -239,18 +253,16 @@ class PrivacyShieldService : LifecycleService() {
         }, ContextCompat.getMainExecutor(this@PrivacyShieldService))
     }
 
-    private fun handleFacesDetected(facesCount: Int) {
+    private fun handleThreatDetected(isThreat: Boolean) {
         ContextCompat.getMainExecutor(this@PrivacyShieldService).execute {
-            if (facesCount > 1) {
+            if (isThreat) {
                 if (!isOverlayShowing) {
                     showOverlay()
-                    // Slow down detection while overlay is showing — save battery
                     faceAnalyzer?.setInterval(OVERLAY_ANALYSIS_INTERVAL_MS)
                 }
             } else {
                 if (isOverlayShowing) {
                     hideOverlay()
-                    // Speed detection back up
                     faceAnalyzer?.setInterval(NORMAL_ANALYSIS_INTERVAL_MS)
                 }
             }
@@ -420,27 +432,12 @@ class PrivacyShieldService : LifecycleService() {
         overlayView = null
     }
 
-    // ---------- Liveness-Aware Face Analyzer ----------
-    /**
-     * Extends basic face detection with a movement-based liveness heuristic.
-     *
-     * Problem: ML Kit detects faces in photos/screens just as well as real faces.
-     * Solution: Track the centroid (center point) of each detected face across frames.
-     *   - Real humans move slightly even when trying to be still (~natural sway, breathing).
-     *   - A static photo held in front of the camera produces centroid coordinates that
-     *     barely change at all between frames.
-     *
-     * Logic:
-     *   1. For every frame, record face centroids.
-     *   2. Keep a rolling history of HISTORY_FRAMES positions per face slot.
-     *   3. A face is "live" if its centroid has moved more than MIN_MOVEMENT_PX total
-     *      over the history window.
-     *   4. Only report the threat if there's been movement evidence >= CONFIRM_FRAMES
-     *      times consecutively (debounce against transient photo detection).
-     */
+    // ---------- Liveness-Aware Face Analyzer with Owner Recognition ----------
     private class FaceAnalyzer(
         initialIntervalMs: Long,
-        private val onFacesDetected: (Int) -> Unit
+        private val ownerEmbedding: FloatArray?,
+        private val embeddingEngine: FaceEmbeddingEngine,
+        private val onThreatChanged: (Boolean) -> Unit
     ) : ImageAnalysis.Analyzer {
 
         private val options = FaceDetectorOptions.Builder()
@@ -455,8 +452,8 @@ class PrivacyShieldService : LifecycleService() {
 
         // Liveness tracking
         private val faceHistory = mutableListOf<android.graphics.PointF>() // centroid history for "extra" faces
-        private var liveConfirmCount = 0
-        private var noThreatCount = 0
+        private var threatConfirmCount = 0
+        private var clearCount = 0
 
         companion object {
             // How far (in pixels) the face centroid needs to drift across HISTORY_FRAMES to count as "live"
@@ -476,76 +473,84 @@ class PrivacyShieldService : LifecycleService() {
 
         fun resetLiveness() {
             faceHistory.clear()
-            liveConfirmCount = 0
-            noThreatCount = 0
+            threatConfirmCount = 0
+            clearCount = 0
         }
 
         @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
         override fun analyze(imageProxy: androidx.camera.core.ImageProxy) {
-            val currentTimestamp = System.currentTimeMillis()
-            if (currentTimestamp - lastAnalyzedTimestamp < analysisIntervalMs) {
-                imageProxy.close()
-                return
-            }
-            lastAnalyzedTimestamp = currentTimestamp
+            val now = System.currentTimeMillis()
+            if (now - lastAnalyzedTimestamp < analysisIntervalMs) { imageProxy.close(); return }
+            lastAnalyzedTimestamp = now
 
-            val mediaImage = imageProxy.image
-            if (mediaImage != null) {
-                val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-                detector.process(image)
-                    .addOnSuccessListener { faces ->
-                        evaluateLiveness(faces)
-                    }
-                    .addOnFailureListener { e ->
-                        Log.e(TAG, "Face detection failed", e)
-                    }
-                    .addOnCompleteListener {
-                        imageProxy.close()
-                    }
-            } else {
-                imageProxy.close()
-            }
+            val mediaImage = imageProxy.image ?: run { imageProxy.close(); return }
+
+            // Capture bitmap for face crop embedding
+            val bitmap = imageProxy.toBitmap()
+
+            val mlImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+            detector.process(mlImage)
+                .addOnSuccessListener { faces -> evaluateThreats(faces, bitmap) }
+                .addOnFailureListener { e -> Log.e(TAG, "Face detection failed", e) }
+                .addOnCompleteListener { imageProxy.close() }
         }
 
-        private fun evaluateLiveness(faces: List<com.google.mlkit.vision.face.Face>) {
-            if (faces.size <= 1) {
-                // Only one (or zero) face. Always safe — reset liveness tracking.
+        private fun evaluateThreats(
+            faces: List<com.google.mlkit.vision.face.Face>,
+            bitmap: android.graphics.Bitmap
+        ) {
+            if (faces.isEmpty()) {
                 faceHistory.clear()
-                liveConfirmCount = 0
-                noThreatCount++
-                if (noThreatCount >= CLEAR_FRAMES) {
-                    onFacesDetected(faces.size)
-                }
+                threatConfirmCount = 0
+                clearCount++
+                if (clearCount >= CLEAR_FRAMES) onThreatChanged(false)
                 return
             }
 
-            noThreatCount = 0
+            clearCount = 0
 
-            // There are 2+ faces. Now check liveness of the extra faces.
-            // We use the centroid of ALL detected faces to keep it simple.
-            // If the aggregate centroid is static → likely a photo.
+            // Liveness: aggregate centroid movement check
             val centroid = android.graphics.PointF(
                 faces.map { it.boundingBox.exactCenterX() }.average().toFloat(),
                 faces.map { it.boundingBox.exactCenterY() }.average().toFloat()
             )
-
             faceHistory.add(centroid)
-            if (faceHistory.size > HISTORY_FRAMES) {
-                faceHistory.removeAt(0)
+            if (faceHistory.size > HISTORY_FRAMES) faceHistory.removeAt(0)
+
+            if (!isMovementDetected()) {
+                Log.d(TAG, "No movement — likely a photo, ignoring.")
+                threatConfirmCount = 0
+                return
             }
 
-            val isLive = isMovementDetected()
-            Log.d(TAG, "Faces: ${faces.size}, Live: $isLive, Centroid: $centroid, History: ${faceHistory.size}")
+            // If no owner embedding, shield is disabled
+            val ownerEmb = ownerEmbedding ?: run {
+                Log.w(TAG, "No owner embedding stored — threat detection disabled.")
+                onThreatChanged(false)
+                return
+            }
 
-            if (isLive) {
-                liveConfirmCount++
-                if (liveConfirmCount >= CONFIRM_FRAMES) {
-                    onFacesDetected(faces.size) // Confirmed real threat
+            // Recognition: any face not matching the owner is a threat
+            var unknownFaceFound = false
+            for (face in faces) {
+                val faceEmb = embeddingEngine.getEmbedding(bitmap, face.boundingBox)
+                if (faceEmb != null) {
+                    val similarity = FaceEmbeddingEngine.cosineSimilarity(ownerEmb, faceEmb)
+                    Log.d(TAG, "Face similarity to owner: ${"%.3f".format(similarity)}")
+                    if (similarity < FaceEmbeddingEngine.SIMILARITY_THRESHOLD) {
+                        unknownFaceFound = true
+                        break
+                    }
                 }
+            }
+
+            if (unknownFaceFound) {
+                threatConfirmCount++
+                if (threatConfirmCount >= CONFIRM_FRAMES) onThreatChanged(true)
             } else {
-                // Face detected but no movement — likely a photo. Don't trigger.
-                Log.d(TAG, "Extra face detected but no movement — treating as photo, ignoring.")
-                liveConfirmCount = 0
+                threatConfirmCount = 0
+                clearCount++
+                if (clearCount >= CLEAR_FRAMES) onThreatChanged(false)
             }
         }
 

@@ -34,6 +34,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    aaptOptions {
+        noCompress += "tflite"
+    }
     buildFeatures {
         compose = true
     }
@@ -65,4 +68,14 @@ dependencies {
 
     // ML Kit Face Detection
     implementation(libs.play.services.mlkit.face.detection)
+
+    // TensorFlow Lite for on-device face embeddings
+    implementation(libs.tflite)
+
+    // Encrypted SharedPreferences for embedding storage
+    implementation(libs.androidx.security.crypto)
+
+    // Layout and AppCompat for RegisterFaceActivity
+    implementation(libs.androidx.constraintlayout)
+    implementation(libs.androidx.appcompat)
 }
