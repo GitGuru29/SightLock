@@ -173,6 +173,7 @@ class PrivacyShieldService : LifecycleService() {
         if (isDetectionPaused) return
         isDetectionPaused = true
         cameraProvider?.unbindAll()
+        faceAnalyzer?.resetLiveness()
         Log.d(TAG, "Detection PAUSED — camera released")
     }
 
@@ -419,7 +420,24 @@ class PrivacyShieldService : LifecycleService() {
         overlayView = null
     }
 
-    // ---------- Throttled Face Analyzer ----------
+    // ---------- Liveness-Aware Face Analyzer ----------
+    /**
+     * Extends basic face detection with a movement-based liveness heuristic.
+     *
+     * Problem: ML Kit detects faces in photos/screens just as well as real faces.
+     * Solution: Track the centroid (center point) of each detected face across frames.
+     *   - Real humans move slightly even when trying to be still (~natural sway, breathing).
+     *   - A static photo held in front of the camera produces centroid coordinates that
+     *     barely change at all between frames.
+     *
+     * Logic:
+     *   1. For every frame, record face centroids.
+     *   2. Keep a rolling history of HISTORY_FRAMES positions per face slot.
+     *   3. A face is "live" if its centroid has moved more than MIN_MOVEMENT_PX total
+     *      over the history window.
+     *   4. Only report the threat if there's been movement evidence >= CONFIRM_FRAMES
+     *      times consecutively (debounce against transient photo detection).
+     */
     private class FaceAnalyzer(
         initialIntervalMs: Long,
         private val onFacesDetected: (Int) -> Unit
@@ -427,6 +445,7 @@ class PrivacyShieldService : LifecycleService() {
 
         private val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+            .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
             .build()
         private val detector = FaceDetection.getClient(options)
 
@@ -434,16 +453,36 @@ class PrivacyShieldService : LifecycleService() {
         private var analysisIntervalMs: Long = initialIntervalMs
         private var lastAnalyzedTimestamp = 0L
 
+        // Liveness tracking
+        private val faceHistory = mutableListOf<android.graphics.PointF>() // centroid history for "extra" faces
+        private var liveConfirmCount = 0
+        private var noThreatCount = 0
+
+        companion object {
+            // How far (in pixels) the face centroid needs to drift across HISTORY_FRAMES to count as "live"
+            private const val MIN_MOVEMENT_PX = 6f
+            // Number of past frames to remember per face
+            private const val HISTORY_FRAMES = 5
+            // Consecutive detections of movement required before reporting threat
+            private const val CONFIRM_FRAMES = 3
+            // Consecutive "no threat" frames required before reporting clear
+            private const val CLEAR_FRAMES = 2
+        }
+
         fun setInterval(intervalMs: Long) {
             analysisIntervalMs = intervalMs
             Log.d(TAG, "Analysis interval set to ${intervalMs}ms")
         }
 
+        fun resetLiveness() {
+            faceHistory.clear()
+            liveConfirmCount = 0
+            noThreatCount = 0
+        }
+
         @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
         override fun analyze(imageProxy: androidx.camera.core.ImageProxy) {
             val currentTimestamp = System.currentTimeMillis()
-
-            // Throttle: skip frames if we analyzed too recently
             if (currentTimestamp - lastAnalyzedTimestamp < analysisIntervalMs) {
                 imageProxy.close()
                 return
@@ -455,7 +494,7 @@ class PrivacyShieldService : LifecycleService() {
                 val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
                 detector.process(image)
                     .addOnSuccessListener { faces ->
-                        onFacesDetected(faces.size)
+                        evaluateLiveness(faces)
                     }
                     .addOnFailureListener { e ->
                         Log.e(TAG, "Face detection failed", e)
@@ -466,6 +505,59 @@ class PrivacyShieldService : LifecycleService() {
             } else {
                 imageProxy.close()
             }
+        }
+
+        private fun evaluateLiveness(faces: List<com.google.mlkit.vision.face.Face>) {
+            if (faces.size <= 1) {
+                // Only one (or zero) face. Always safe — reset liveness tracking.
+                faceHistory.clear()
+                liveConfirmCount = 0
+                noThreatCount++
+                if (noThreatCount >= CLEAR_FRAMES) {
+                    onFacesDetected(faces.size)
+                }
+                return
+            }
+
+            noThreatCount = 0
+
+            // There are 2+ faces. Now check liveness of the extra faces.
+            // We use the centroid of ALL detected faces to keep it simple.
+            // If the aggregate centroid is static → likely a photo.
+            val centroid = android.graphics.PointF(
+                faces.map { it.boundingBox.exactCenterX() }.average().toFloat(),
+                faces.map { it.boundingBox.exactCenterY() }.average().toFloat()
+            )
+
+            faceHistory.add(centroid)
+            if (faceHistory.size > HISTORY_FRAMES) {
+                faceHistory.removeAt(0)
+            }
+
+            val isLive = isMovementDetected()
+            Log.d(TAG, "Faces: ${faces.size}, Live: $isLive, Centroid: $centroid, History: ${faceHistory.size}")
+
+            if (isLive) {
+                liveConfirmCount++
+                if (liveConfirmCount >= CONFIRM_FRAMES) {
+                    onFacesDetected(faces.size) // Confirmed real threat
+                }
+            } else {
+                // Face detected but no movement — likely a photo. Don't trigger.
+                Log.d(TAG, "Extra face detected but no movement — treating as photo, ignoring.")
+                liveConfirmCount = 0
+            }
+        }
+
+        private fun isMovementDetected(): Boolean {
+            if (faceHistory.size < 2) return false
+            var totalMovement = 0f
+            for (i in 1 until faceHistory.size) {
+                val dx = faceHistory[i].x - faceHistory[i - 1].x
+                val dy = faceHistory[i].y - faceHistory[i - 1].y
+                totalMovement += kotlin.math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+            }
+            return totalMovement >= MIN_MOVEMENT_PX
         }
     }
 }
