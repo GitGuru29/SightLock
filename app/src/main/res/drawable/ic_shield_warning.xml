@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Shield shape -->
+    <path
+        android:pathData="M12,1L3,5v6c0,5.55 3.84,10.74 9,12 5.16,-1.26 9,-6.45 9,-12V5L12,1z"
+        android:fillColor="#FFFFFF" />
+    <!-- Exclamation mark body -->
+    <path
+        android:pathData="M11,7h2v5h-2z"
+        android:fillColor="#EF4444" />
+    <!-- Exclamation mark dot -->
+    <path
+        android:pathData="M11,14h2v2h-2z"
+        android:fillColor="#EF4444" />
+</vector>

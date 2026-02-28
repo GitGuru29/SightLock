@@ -258,9 +258,7 @@ class PrivacyShieldService : LifecycleService() {
 
     private fun createOverlayView() {
         val themedContext = android.view.ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault)
-        overlayView = LayoutInflater.from(themedContext).inflate(R.layout.overlay_privacy_shield, null).apply {
-            setBackgroundColor(android.graphics.Color.parseColor("#E6000000"))
-        }
+        overlayView = LayoutInflater.from(themedContext).inflate(R.layout.overlay_privacy_shield, null)
     }
 
     private fun showOverlay() {
@@ -273,7 +271,6 @@ class PrivacyShieldService : LifecycleService() {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
                 WindowManager.LayoutParams.TYPE_PHONE,
-            // Removed FLAG_KEEP_SCREEN_ON — it prevented the screen from sleeping
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -284,8 +281,35 @@ class PrivacyShieldService : LifecycleService() {
         try {
             windowManager?.addView(overlayView, params)
             isOverlayShowing = true
+            startOverlayAnimations()
         } catch (e: Exception) {
             Log.e(TAG, "Error adding overlay: ${e.message}")
+        }
+    }
+
+    private fun startOverlayAnimations() {
+        overlayView?.let { root ->
+            // Pulse the shield glow
+            root.findViewById<View>(R.id.shield_glow)?.let { glow ->
+                val pulseAnim = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.pulse_glow)
+                glow.startAnimation(pulseAnim)
+            }
+
+            // Bounce-in the warning card
+            root.findViewById<View>(R.id.warning_card)?.let { card ->
+                val bounceAnim = android.view.animation.AnimationUtils.loadAnimation(this, R.anim.scale_in_bounce)
+                card.startAnimation(bounceAnim)
+            }
+
+            // Blink the status dot
+            root.findViewById<View>(R.id.status_dot)?.let { dot ->
+                val blinkAnim = android.view.animation.AlphaAnimation(1.0f, 0.2f).apply {
+                    duration = 600
+                    repeatMode = android.view.animation.Animation.REVERSE
+                    repeatCount = android.view.animation.Animation.INFINITE
+                }
+                dot.startAnimation(blinkAnim)
+            }
         }
     }
 
