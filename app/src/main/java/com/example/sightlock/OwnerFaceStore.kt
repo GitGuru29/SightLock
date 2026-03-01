@@ -8,7 +8,7 @@ import java.nio.ByteOrder
 
 /**
  * Handles persistent, encrypted storage of the owner's face embedding.
- * The embedding is a float array of dimension 128 (MobileFaceNet output).
+ * The embedding is a float array of dimension 192 (MobileFaceNet output).
  */
 object OwnerFaceStore {
 

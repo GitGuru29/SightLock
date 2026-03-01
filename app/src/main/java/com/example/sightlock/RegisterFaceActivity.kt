@@ -74,7 +74,9 @@ class RegisterFaceActivity : AppCompatActivity() {
 
     private var state = RegistrationState.WAITING_FOR_FACE
     private var capturedEmbeddings = mutableListOf<FloatArray>()
-    private val REQUIRED_CAPTURES = 5
+    // 30 captures * 500ms interval = ~15 seconds of capturing
+    private val REQUIRED_CAPTURES = 30
+    private var lastCaptureTime = 0L
 
     // Blink detection state
     private var eyesWereClosed = false
@@ -133,10 +135,8 @@ class RegisterFaceActivity : AppCompatActivity() {
         val bitmap = imageProxy.toBitmap()
         latestBitmap = bitmap
 
-        val mediaImage = imageProxy.image
-        if (mediaImage == null) { imageProxy.close(); return }
-
-        val mlkitImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+        // toBitmap() already handles layout rotation upright
+        val mlkitImage = InputImage.fromBitmap(bitmap, 0)
         detector.process(mlkitImage)
             .addOnSuccessListener { faces ->
                 mainHandler.post { processFaces(faces, bitmap) }
@@ -146,10 +146,14 @@ class RegisterFaceActivity : AppCompatActivity() {
 
     private fun processFaces(faces: List<Face>, bitmap: Bitmap) {
         val face = faces.firstOrNull()
+        if (face == null && state != RegistrationState.WAITING_FOR_FACE) {
+            android.util.Log.d("RegisterFace", "Face lost. Resetting to WAITING_FOR_FACE")
+        }
 
         when (state) {
             RegistrationState.WAITING_FOR_FACE -> {
                 if (face != null) {
+                    android.util.Log.d("RegisterFace", "Face detected. Transitioning to BLINK_CHALLENGE")
                     transitionToBlink()
                 }
             }
@@ -165,6 +169,8 @@ class RegisterFaceActivity : AppCompatActivity() {
                 val rightOpen = face.rightEyeOpenProbability ?: 1f
                 val avgOpen = (leftOpen + rightOpen) / 2f
 
+                android.util.Log.d("RegisterFace", "Blink: left=$leftOpen right=$rightOpen avg=$avgOpen closed=$eyesWereClosed")
+
                 // Blink detected: eyes were open, then < 0.2, now open again
                 if (avgOpen < 0.2f) {
                     eyesWereClosed = true
@@ -178,13 +184,22 @@ class RegisterFaceActivity : AppCompatActivity() {
                 if (face != null) {
                     val embedding = embeddingEngine.getEmbedding(bitmap, face.boundingBox)
                     if (embedding != null) {
-                        capturedEmbeddings.add(embedding)
-                        updateCaptureProgress(capturedEmbeddings.size)
+                        // Enforce a minimum time between captures (e.g. 500ms) to stretch out the registration
+                        val currentTime = System.currentTimeMillis()
+                        if (currentTime - lastCaptureTime >= 500L) {
+                            lastCaptureTime = currentTime
+                            capturedEmbeddings.add(embedding)
+                            android.util.Log.d("RegisterFace", "Captured frame ${capturedEmbeddings.size}/$REQUIRED_CAPTURES")
+                            updateCaptureProgress(capturedEmbeddings.size)
 
                         if (capturedEmbeddings.size >= REQUIRED_CAPTURES) {
+                            android.util.Log.d("RegisterFace", "Capture complete. Finishing registration.")
                             finishRegistration()
                         }
                     }
+                } else {
+                    android.util.Log.e("RegisterFace", "Failed to get embedding for frame")
+                }
                 }
             }
 

@@ -23,12 +23,13 @@ class FaceEmbeddingEngine(context: Context) {
         private const val TAG = "FaceEmbeddingEngine"
         private const val MODEL_FILE = "mobile_face_net.tflite"
         private const val INPUT_SIZE = 112
-        private const val EMBEDDING_SIZE = 128
+        private const val EMBEDDING_SIZE = 192
 
         // Owner and unknown faces are "same person" if cosine similarity > this threshold
         const val SIMILARITY_THRESHOLD = 0.65f
 
         fun cosineSimilarity(a: FloatArray, b: FloatArray): Float {
+            if (a.size != b.size) return 0f
             var dot = 0f; var normA = 0f; var normB = 0f
             for (i in a.indices) {
                 dot  += a[i] * b[i]

@@ -235,6 +235,7 @@ class PrivacyShieldService : LifecycleService() {
 
                 imageAnalyzer = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                     .build()
                     .also {
                         it.setAnalyzer(cameraExecutor, faceAnalyzer!!)
@@ -275,6 +276,7 @@ class PrivacyShieldService : LifecycleService() {
     }
 
     private fun showOverlay() {
+        if (overlayView == null) createOverlayView()
         if (overlayView == null) return
 
         val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -406,29 +408,35 @@ class PrivacyShieldService : LifecycleService() {
                     alphaAnim.start()
                 }
 
-                fadeOutAnim.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
-                    override fun onAnimationStart(animation: android.view.animation.Animation?) {}
-                    override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
-                    override fun onAnimationEnd(animation: android.view.animation.Animation?) {
-                        try {
-                            windowManager?.removeView(overlayView)
-                            isOverlayShowing = false
-                            isHiding = false
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error removing overlay: ${e.message}")
-                        }
-                    }
-                })
                 card?.startAnimation(fadeOutAnim)
+                
+                // Reliably remove view and force re-inflation next time
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    try {
+                        windowManager?.removeView(overlayView)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error removing overlay: ${e.message}")
+                    }
+                    isOverlayShowing = false
+                    isHiding = false
+                    overlayView = null
+                }, 300)
             }, 800)
         } ?: run {
             isOverlayShowing = false
             isHiding = false
+            overlayView = null
         }
     }
 
     private fun removeOverlay() {
         hideOverlay()
+        // If the service is destroyed immediately, ensure we don't leak
+        try {
+            if (isOverlayShowing) {
+                windowManager?.removeView(overlayView)
+            }
+        } catch (e: Exception) {}
         overlayView = null
     }
 
@@ -483,12 +491,11 @@ class PrivacyShieldService : LifecycleService() {
             if (now - lastAnalyzedTimestamp < analysisIntervalMs) { imageProxy.close(); return }
             lastAnalyzedTimestamp = now
 
-            val mediaImage = imageProxy.image ?: run { imageProxy.close(); return }
-
-            // Capture bitmap for face crop embedding
+            // Capture bitmap for face crop/analysis
             val bitmap = imageProxy.toBitmap()
 
-            val mlImage = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+            // toBitmap() already handles layout rotation upright
+            val mlImage = InputImage.fromBitmap(bitmap, 0)
             detector.process(mlImage)
                 .addOnSuccessListener { faces -> evaluateThreats(faces, bitmap) }
                 .addOnFailureListener { e -> Log.e(TAG, "Face detection failed", e) }
