@@ -9,9 +9,14 @@ import android.os.Looper
 import android.view.View
 import android.view.animation.AlphaAnimation
 import android.widget.ImageView
-import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import android.media.ToneGenerator
+import android.media.AudioManager
+import android.os.Vibrator
+import android.os.VibratorManager
+import android.os.Build
+import android.os.VibrationEffect
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -45,13 +50,25 @@ class RegisterFaceActivity : AppCompatActivity() {
     private lateinit var faceGuide: OvalFaceGuideView
     private lateinit var tvInstruction: TextView
     private lateinit var ivEyeIcon: ImageView
-    private lateinit var captureProgress: ProgressBar
     private lateinit var tvCaptureLabel: TextView
 
     // Camera
     private lateinit var cameraExecutor: ExecutorService
     private var cameraProvider: ProcessCameraProvider? = null
     private var latestBitmap: Bitmap? = null
+
+    // Debug Panel
+    private lateinit var debugPanel: View
+    private lateinit var tvDebugFps: TextView
+    private lateinit var tvDebugDist: TextView
+    private lateinit var tvDebugYaw: TextView
+    private lateinit var tvDebugPitch: TextView
+    private lateinit var tvDebugState: TextView
+
+    // FPS Calculation
+    private var frameCount = 0
+    private var lastFpsTimestamp = 0L
+    private var currentFps = 0
 
     // Face detection (ML Kit)
     private val detector = FaceDetection.getClient(
@@ -66,16 +83,21 @@ class RegisterFaceActivity : AppCompatActivity() {
 
     // Registration State Machine
     private enum class RegistrationState {
-        WAITING_FOR_FACE,   // Waiting for user's face to appear in oval
-        BLINK_CHALLENGE,    // Face detected, waiting for blink
-        CAPTURING,          // Blink confirmed, capturing frames
+        WAITING_FOR_FACE,
+        BLINK_CHALLENGE,
+        CAPTURING_FRONT,
+        CAPTURING_LEFT,
+        CAPTURING_RIGHT,
+        CAPTURING_UP,
+        CAPTURING_DOWN,
         DONE
     }
 
     private var state = RegistrationState.WAITING_FOR_FACE
     private var capturedEmbeddings = mutableListOf<FloatArray>()
-    // 30 captures * 500ms interval = ~15 seconds of capturing
+    // 10 Front, 5 Left, 5 Right, 5 Up, 5 Down
     private val REQUIRED_CAPTURES = 30
+    private var capturesForCurrentState = 0
     private var lastCaptureTime = 0L
 
     // Blink detection state
@@ -83,19 +105,50 @@ class RegisterFaceActivity : AppCompatActivity() {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    private var toneGenerator: ToneGenerator? = null
+    private var vibrator: Vibrator? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_register_face)
 
         cameraPreview = findViewById(R.id.camera_preview)
+        val tvTitle = findViewById<TextView>(R.id.tv_title)
         faceGuide = findViewById(R.id.face_guide)
         tvInstruction = findViewById(R.id.tv_instruction)
         ivEyeIcon = findViewById(R.id.iv_eye_icon)
-        captureProgress = findViewById(R.id.capture_progress)
         tvCaptureLabel = findViewById(R.id.tv_capture_label)
+
+        // Debug Views
+        debugPanel = findViewById(R.id.debug_panel)
+        tvDebugFps = findViewById(R.id.tv_debug_fps)
+        tvDebugDist = findViewById(R.id.tv_debug_dist)
+        tvDebugYaw = findViewById(R.id.tv_debug_yaw)
+        tvDebugPitch = findViewById(R.id.tv_debug_pitch)
+        tvDebugState = findViewById(R.id.tv_debug_state)
+
+        // Toggle debug panel on long press of the title
+        tvTitle.setOnLongClickListener {
+            debugPanel.visibility = if (debugPanel.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            true
+        }
 
         embeddingEngine = FaceEmbeddingEngine(this)
         cameraExecutor = Executors.newSingleThreadExecutor()
+
+        try {
+            toneGenerator = ToneGenerator(AudioManager.STREAM_SYSTEM, 50)
+        } catch (e: Exception) {
+            android.util.Log.e("RegisterFace", "Failed to create ToneGenerator")
+        }
+
+        vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vibratorManager.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        }
 
         startCamera()
     }
@@ -131,6 +184,15 @@ class RegisterFaceActivity : AppCompatActivity() {
             return
         }
 
+        // FPS Calculation
+        frameCount++
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastFpsTimestamp >= 1000) {
+            currentFps = frameCount
+            frameCount = 0
+            lastFpsTimestamp = currentTime
+        }
+
         // Capture latest bitmap for embedding extraction
         val bitmap = imageProxy.toBitmap()
         latestBitmap = bitmap
@@ -139,6 +201,10 @@ class RegisterFaceActivity : AppCompatActivity() {
         val mlkitImage = InputImage.fromBitmap(bitmap, 0)
         detector.process(mlkitImage)
             .addOnSuccessListener { faces ->
+                if (debugPanel.visibility == View.VISIBLE) {
+                    tvDebugFps.text = "FPS: $currentFps"
+                    tvDebugState.text = "State: ${state.name} (${capturesForCurrentState}/10|5)"
+                }
                 mainHandler.post { processFaces(faces, bitmap) }
             }
             .addOnCompleteListener { imageProxy.close() }
@@ -148,6 +214,12 @@ class RegisterFaceActivity : AppCompatActivity() {
         val face = faces.firstOrNull()
         if (face == null && state != RegistrationState.WAITING_FOR_FACE) {
             android.util.Log.d("RegisterFace", "Face lost. Resetting to WAITING_FOR_FACE")
+        }
+        
+        if (face != null && debugPanel.visibility == View.VISIBLE) {
+            tvDebugDist.text = "Dist (Width): ${face.boundingBox.width()}"
+            tvDebugYaw.text = String.format("Yaw (Y): %.2f", face.headEulerAngleY)
+            tvDebugPitch.text = String.format("Pitch (X): %.2f", face.headEulerAngleX)
         }
 
         when (state) {
@@ -180,26 +252,29 @@ class RegisterFaceActivity : AppCompatActivity() {
                 }
             }
 
-            RegistrationState.CAPTURING -> {
+            RegistrationState.CAPTURING_FRONT,
+            RegistrationState.CAPTURING_LEFT,
+            RegistrationState.CAPTURING_RIGHT,
+            RegistrationState.CAPTURING_UP,
+            RegistrationState.CAPTURING_DOWN -> {
                 if (face != null) {
-                    val embedding = embeddingEngine.getEmbedding(bitmap, face.boundingBox)
-                    if (embedding != null) {
-                        // Enforce a minimum time between captures (e.g. 500ms) to stretch out the registration
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastCaptureTime >= 500L) {
-                            lastCaptureTime = currentTime
-                            capturedEmbeddings.add(embedding)
-                            android.util.Log.d("RegisterFace", "Captured frame ${capturedEmbeddings.size}/$REQUIRED_CAPTURES")
-                            updateCaptureProgress(capturedEmbeddings.size)
-
-                        if (capturedEmbeddings.size >= REQUIRED_CAPTURES) {
-                            android.util.Log.d("RegisterFace", "Capture complete. Finishing registration.")
-                            finishRegistration()
+                    val isValidPose = checkFacePose(face)
+                    
+                    if (isValidPose) {
+                        val embedding = embeddingEngine.getEmbedding(bitmap, face.boundingBox)
+                        if (embedding != null) {
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastCaptureTime >= 300L) { // Faster capture interval
+                                lastCaptureTime = currentTime
+                                capturedEmbeddings.add(embedding)
+                                capturesForCurrentState++
+                                updateCaptureProgress(capturedEmbeddings.size)
+                                
+                                playCaptureFeedback()
+                                advanceCaptureStateIfNeeded()
+                            }
                         }
                     }
-                } else {
-                    android.util.Log.e("RegisterFace", "Failed to get embedding for frame")
-                }
                 }
             }
 
@@ -212,6 +287,7 @@ class RegisterFaceActivity : AppCompatActivity() {
         eyesWereClosed = false
         faceGuide.isActive = false
         faceGuide.isBlink = false
+        faceGuide.isScanning = false
         tvInstruction.text = "Position your face in the oval"
         ivEyeIcon.visibility = View.GONE
     }
@@ -220,7 +296,8 @@ class RegisterFaceActivity : AppCompatActivity() {
         state = RegistrationState.BLINK_CHALLENGE
         faceGuide.isActive = true
         faceGuide.isBlink = false
-        tvInstruction.text = "Now blink slowly to confirm liveness"
+        faceGuide.isScanning = false
+        tvInstruction.text = "Now blink slowly to confirm"
         ivEyeIcon.visibility = View.VISIBLE
         // Animate eye icon
         val blink = AlphaAnimation(1f, 0.2f).apply {
@@ -231,20 +308,113 @@ class RegisterFaceActivity : AppCompatActivity() {
     }
 
     private fun transitionToCapturing() {
-        state = RegistrationState.CAPTURING
+        state = RegistrationState.CAPTURING_FRONT
         capturedEmbeddings.clear()
-        faceGuide.isBlink = true
-        tvInstruction.text = "Hold still..."
+        capturesForCurrentState = 0
+        faceGuide.isBlink = false
+        faceGuide.isScanning = true
+        tvInstruction.text = "Look straight ahead"
         ivEyeIcon.clearAnimation()
         ivEyeIcon.visibility = View.GONE
-        captureProgress.progress = 0
-        captureProgress.visibility = View.VISIBLE
+        faceGuide.capturesCompleted = 0
         tvCaptureLabel.visibility = View.VISIBLE
+        playHapticPulse()
+    }
+
+    private fun playCaptureFeedback() {
+        toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 30)
+    }
+
+    private fun playHapticPulse() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(50)
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+    }
+
+    private fun checkFacePose(face: Face): Boolean {
+        val yaw = face.headEulerAngleY
+        val pitch = face.headEulerAngleX
+
+        // Warn if face is too far or too close (Bounding box width relative to 480x640 preview)
+        val faceWidth = face.boundingBox.width()
+        if (faceWidth < 150) tvCaptureLabel.text = "Move closer..."
+        else if (faceWidth > 350) tvCaptureLabel.text = "Move further back..."
+        else tvCaptureLabel.text = "Hold still..."
+
+        val tolerance = 8f
+
+        return when (state) {
+            RegistrationState.CAPTURING_FRONT -> {
+                if (Math.abs(yaw) < tolerance && Math.abs(pitch) < tolerance) true
+                else { tvInstruction.text = "Look straight ahead"; false }
+            }
+            RegistrationState.CAPTURING_LEFT -> {
+                if (yaw > 15f) true
+                else { tvInstruction.text = "Turn head slightly to your LEFT"; false }
+            }
+            RegistrationState.CAPTURING_RIGHT -> {
+                if (yaw < -15f) true
+                else { tvInstruction.text = "Turn head slightly to your RIGHT"; false }
+            }
+            RegistrationState.CAPTURING_UP -> {
+                // Pitch is positive when looking up
+                if (pitch > 10f) true
+                else { tvInstruction.text = "Tilt head slightly UPWARD"; false }
+            }
+            RegistrationState.CAPTURING_DOWN -> {
+                // Pitch is negative when looking down
+                if (pitch < -10f) true
+                else { tvInstruction.text = "Tilt head slightly DOWNWARD"; false }
+            }
+            else -> false
+        }
+    }
+
+    private fun advanceCaptureStateIfNeeded() {
+        when (state) {
+            RegistrationState.CAPTURING_FRONT -> {
+                if (capturesForCurrentState >= 10) {
+                    state = RegistrationState.CAPTURING_LEFT
+                    capturesForCurrentState = 0
+                }
+            }
+            RegistrationState.CAPTURING_LEFT -> {
+                if (capturesForCurrentState >= 5) {
+                    state = RegistrationState.CAPTURING_RIGHT
+                    capturesForCurrentState = 0
+                }
+            }
+            RegistrationState.CAPTURING_RIGHT -> {
+                if (capturesForCurrentState >= 5) {
+                    state = RegistrationState.CAPTURING_UP
+                    capturesForCurrentState = 0
+                }
+            }
+            RegistrationState.CAPTURING_UP -> {
+                if (capturesForCurrentState >= 5) {
+                    state = RegistrationState.CAPTURING_DOWN
+                    capturesForCurrentState = 0
+                }
+            }
+            RegistrationState.CAPTURING_DOWN -> {
+                if (capturesForCurrentState >= 5) {
+                    finishRegistration()
+                }
+            }
+            else -> {}
+        }
     }
 
     private fun updateCaptureProgress(count: Int) {
-        captureProgress.progress = count
-        tvCaptureLabel.text = "Capturing ${count}/${REQUIRED_CAPTURES}..."
+        faceGuide.capturesCompleted = count
+        // Label is now handled by checkFacePose warning about distance
     }
 
     private fun finishRegistration() {
@@ -255,10 +425,13 @@ class RegisterFaceActivity : AppCompatActivity() {
         OwnerFaceStore.saveEmbedding(this, avgEmbedding)
 
         mainHandler.post {
-            captureProgress.progress = REQUIRED_CAPTURES
-            tvInstruction.text = "✓ Face registered!"
-            tvCaptureLabel.text = "Registration complete"
-            Toast.makeText(this, "Owner face registered successfully!", Toast.LENGTH_SHORT).show()
+            playHapticPulse()
+            faceGuide.capturesCompleted = REQUIRED_CAPTURES
+            faceGuide.isScanning = false
+            faceGuide.isBlink = true // Turn it solid green
+            tvInstruction.text = "Face registered"
+            tvCaptureLabel.text = "Setup complete"
+            Toast.makeText(this, "Master profile saved successfully", Toast.LENGTH_SHORT).show()
 
             mainHandler.postDelayed({
                 setResult(RESULT_REGISTERED)
@@ -271,5 +444,6 @@ class RegisterFaceActivity : AppCompatActivity() {
         super.onDestroy()
         cameraExecutor.shutdown()
         embeddingEngine.close()
+        toneGenerator?.release()
     }
 }

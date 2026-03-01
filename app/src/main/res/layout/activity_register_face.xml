@@ -5,7 +5,7 @@
     android:id="@+id/register_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0D0D12">
+    android:background="@android:color/transparent">
 
     <!-- Live camera preview -->
     <androidx.camera.view.PreviewView
@@ -14,107 +14,102 @@
         android:layout_height="match_parent"
         app:scaleType="fillCenter" />
 
-    <!-- Dark scrim overlay for UI contrast -->
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="#80000000"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <!-- Top title-->
+    <!-- Top title (Clean Native styled) -->
     <TextView
         android:id="@+id/tv_title"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="56dp"
         android:fontFamily="sans-serif-medium"
-        android:letterSpacing="0.1"
-        android:text="REGISTER YOUR FACE"
-        android:textColor="#FFFFFF"
-        android:textSize="18sp"
+        android:letterSpacing="0.05"
+        android:text="Set Up Face Scan"
+        android:textColor="@android:color/white"
+        android:textSize="22sp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- Subtitle -->
     <TextView
         android:id="@+id/tv_subtitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="8dp"
         android:fontFamily="sans-serif"
-        android:text="SightLock will recognize only you"
-        android:textColor="#80FFFFFF"
-        android:textSize="13sp"
+        android:text="First, position your face in the camera frame."
+        android:textColor="#A1A1A1"
+        android:textSize="14sp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/tv_title" />
 
-    <!-- Oval Face Guide -->
+    <!-- Oval Face Guide (Serves as the Reticle and Dark Screen Overlay) -->
     <com.example.sightlock.OvalFaceGuideView
         android:id="@+id/face_guide"
-        android:layout_width="260dp"
-        android:layout_height="320dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.4" />
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
 
-    <!-- State instruction text -->
-    <TextView
-        android:id="@+id/tv_instruction"
+    <!-- Central Information Box -->
+    <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:fontFamily="sans-serif-medium"
-        android:text="Position your face in the oval"
-        android:textAlignment="center"
-        android:textColor="#FFFFFF"
-        android:textSize="16sp"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:layout_marginTop="48dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/face_guide" />
+        app:layout_constraintTop_toBottomOf="@id/face_guide">
 
-    <!-- Animated eye icon for blink step -->
-    <ImageView
-        android:id="@+id/iv_eye_icon"
-        android:layout_width="48dp"
-        android:layout_height="48dp"
-        android:layout_marginTop="12dp"
-        android:src="@android:drawable/ic_menu_view"
-        android:tint="#FFFFFF"
-        android:visibility="gone"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/tv_instruction" />
+        <!-- State instruction text -->
+        <TextView
+            android:id="@+id/tv_instruction"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:text="Look directly at the camera"
+            android:textAlignment="center"
+            android:textColor="@android:color/white"
+            android:textSize="16sp" />
 
-    <!-- Capture progress bar -->
-    <ProgressBar
-        android:id="@+id/capture_progress"
-        style="@android:style/Widget.ProgressBar.Horizontal"
-        android:layout_width="180dp"
-        android:layout_height="6dp"
-        android:layout_marginTop="20dp"
-        android:max="5"
-        android:progress="0"
-        android:progressDrawable="@drawable/registration_progress"
-        android:visibility="gone"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/iv_eye_icon" />
+        <!-- Animated eye icon for blink step -->
+        <ImageView
+            android:id="@+id/iv_eye_icon"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginTop="16dp"
+            android:src="@android:drawable/ic_menu_view"
+            android:tint="#007AFF"
+            android:visibility="gone" />
 
-    <TextView
-        android:id="@+id/tv_capture_label"
-        android:layout_width="wrap_content"
+        <!-- Progress status label -->
+        <TextView
+            android:id="@+id/tv_capture_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:fontFamily="sans-serif"
+            android:text="Setting up..."
+            android:textColor="#007AFF"
+            android:textSize="14sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Advanced Debug Panel (Hidden by default) -->
+    <LinearLayout
+        android:id="@+id/debug_panel"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:fontFamily="sans-serif"
-        android:text="Capturing..."
-        android:textColor="#80FFFFFF"
-        android:textSize="12sp"
+        android:orientation="vertical"
+        android:background="#99000000"
+        android:padding="8dp"
         android:visibility="gone"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/capture_progress" />
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <TextView android:id="@+id/tv_debug_fps" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#00FF00" android:fontFamily="monospace" android:textSize="10sp" android:text="FPS: --"/>
+        <TextView android:id="@+id/tv_debug_dist" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#00FF00" android:fontFamily="monospace" android:textSize="10sp" android:text="Dist (Width): --"/>
+        <TextView android:id="@+id/tv_debug_yaw" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#00FF00" android:fontFamily="monospace" android:textSize="10sp" android:text="Yaw (Y): --"/>
+        <TextView android:id="@+id/tv_debug_pitch" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#00FF00" android:fontFamily="monospace" android:textSize="10sp" android:text="Pitch (X): --"/>
+        <TextView android:id="@+id/tv_debug_state" android:layout_width="wrap_content" android:layout_height="wrap_content" android:textColor="#00FF00" android:fontFamily="monospace" android:textSize="10sp" android:text="State: --"/>
+    </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
