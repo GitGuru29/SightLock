@@ -201,52 +201,117 @@ fun PrivacyShieldScreen(modifier: Modifier = Modifier) {
                 .padding(bottom = 32.dp),
             contentAlignment = Alignment.Center
         ) {
-            if (allSystemsGreen) {
-                // Outer glow when running
-                if (isServiceRunning) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(0.85f)
-                            .height(65.dp)
-                            .clip(RoundedCornerShape(32.dp))
-                            .background(AlertRed.copy(alpha = glowAlpha))
-                    )
-                }
-                
-                Button(
-                    onClick = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (allSystemsGreen) {
+                    // Outer glow when running
+                    Box(contentAlignment = Alignment.Center) {
                         if (isServiceRunning) {
-                            PrivacyShieldService.stopService(context)
-                            isServiceRunning = false
-                        } else {
-                            PrivacyShieldService.startService(context)
-                            isServiceRunning = true
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.85f)
+                                    .height(65.dp)
+                                    .clip(RoundedCornerShape(32.dp))
+                                    .background(AlertRed.copy(alpha = glowAlpha))
+                            )
                         }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth(0.8f)
-                        .height(56.dp),
-                    shape = RoundedCornerShape(28.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isServiceRunning) AlertRed else SecureGreen,
-                        contentColor = SpaceBlack
-                    )
-                ) {
+                        
+                        Button(
+                            onClick = {
+                                if (isServiceRunning) {
+                                    PrivacyShieldService.stopService(context)
+                                    isServiceRunning = false
+                                } else {
+                                    PrivacyShieldService.startService(context)
+                                    isServiceRunning = true
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth(0.8f)
+                                .height(56.dp),
+                            shape = RoundedCornerShape(28.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isServiceRunning) AlertRed else SecureGreen,
+                                contentColor = SpaceBlack
+                            )
+                        ) {
+                            Text(
+                                text = if (isServiceRunning) "TERMINATE SMART SHIELD" else "ENGAGE SMART SHIELD",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.2.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    // Manual Privacy Display Toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(0.9f),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "SOFTWARE PRIVACY DISPLAY",
+                                color = NeonCyan,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp
+                            )
+                            Text(
+                                text = "Obscure screen from side angles",
+                                color = TextSecondary,
+                                fontSize = 10.sp
+                            )
+                        }
+                        
+                        var isPrivacyMeshActive by remember { mutableStateOf(PrivacyTileService.isMeshActive) }
+                        
+                        Switch(
+                            checked = isPrivacyMeshActive,
+                            onCheckedChange = { active ->
+                                PrivacyTileService.isMeshActive = active
+                                isPrivacyMeshActive = active
+                                val serviceIntent = Intent(context, PrivacyMeshService::class.java).apply {
+                                    action = PrivacyMeshService.ACTION_TOGGLE
+                                }
+                                if (active) {
+                                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                        context.startForegroundService(serviceIntent)
+                                    } else {
+                                        context.startService(serviceIntent)
+                                    }
+                                } else {
+                                    context.stopService(serviceIntent)
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = SpaceBlack,
+                                checkedTrackColor = NeonCyan,
+                                uncheckedThumbColor = TextSecondary,
+                                uncheckedTrackColor = DeepGray,
+                                uncheckedBorderColor = NeonCyanDim
+                            )
+                        )
+                    }
+                    
                     Text(
-                        text = if (isServiceRunning) "TERMINATE SHIELD" else "ENGAGE SHIELD",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 1.5.sp
+                        text = "Tip: Add 'Privacy Display' to your Quick Settings panel!",
+                        color = NeonCyanDim,
+                        fontSize = 9.sp,
+                        modifier = Modifier.padding(top = 16.dp)
+                    )
+
+                } else {
+                    Text(
+                        text = "AWAITING SYSTEM CONFIGURATION...",
+                        color = AlertRed,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
                     )
                 }
-            } else {
-                Text(
-                    text = "AWAITING SYSTEM CONFIGURATION...",
-                    color = AlertRed,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
             }
         }
     }
