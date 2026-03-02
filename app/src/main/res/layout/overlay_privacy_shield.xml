@@ -15,8 +15,8 @@
         android:gravity="center_horizontal"
         android:orientation="vertical"
         android:paddingHorizontal="48dp"
-        android:paddingTop="40dp"
-        android:paddingBottom="32dp">
+        android:paddingTop="48dp"
+        android:paddingBottom="40dp">
 
         <!-- Pulsing shield icon -->
         <FrameLayout
@@ -34,29 +34,29 @@
             <!-- Shield vector icon -->
             <ImageView
                 android:id="@+id/shield_icon"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
                 android:layout_gravity="center"
                 android:contentDescription="Privacy shield warning"
-                android:src="@drawable/ic_shield_warning" />
+                android:src="@drawable/ic_shield_warning"
+                android:tint="#0A0A0F" />
         </FrameLayout>
 
         <!-- Spacing -->
         <View
             android:layout_width="0dp"
-            android:layout_height="24dp" />
+            android:layout_height="32dp" />
 
         <!-- Alert header -->
         <TextView
             android:id="@+id/alert_header"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:fontFamily="sans-serif-medium"
-            android:letterSpacing="0.15"
-            android:text="⚠ PRIVACY THREAT"
-            android:textColor="#FFEF4444"
-            android:textSize="14sp"
-            android:textStyle="bold" />
+            android:fontFamily="sans-serif-black"
+            android:letterSpacing="0.2"
+            android:text="CRITICAL THREAT"
+            android:textColor="#FF003C"
+            android:textSize="16sp" />
 
         <!-- Spacing -->
         <View
@@ -68,32 +68,34 @@
             android:id="@+id/main_message"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:fontFamily="sans-serif-light"
-            android:text="Screen Locked"
+            android:fontFamily="monospace"
+            android:text="ACCESS DENIED"
             android:textColor="#FFFFFF"
-            android:textSize="32sp" />
+            android:textSize="28sp"
+            android:textStyle="bold" />
 
         <!-- Spacing -->
         <View
             android:layout_width="0dp"
-            android:layout_height="12dp" />
+            android:layout_height="16dp" />
 
         <!-- Sub message -->
         <TextView
             android:id="@+id/sub_message"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:fontFamily="sans-serif"
-            android:text="Unauthorized viewer detected.\nContent hidden for your privacy."
+            android:fontFamily="monospace"
+            android:text="UNAUTHORIZED BIOMETRIC\nSIGNATURE DETECTED."
             android:textAlignment="center"
-            android:textColor="#99FFFFFF"
-            android:textSize="14sp"
-            android:lineSpacingExtra="4dp" />
+            android:textColor="#94A3B8"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:lineSpacingExtra="6dp" />
 
         <!-- Spacing -->
         <View
             android:layout_width="0dp"
-            android:layout_height="24dp" />
+            android:layout_height="32dp" />
 
         <!-- Status indicator -->
         <LinearLayout
@@ -110,17 +112,18 @@
                 android:background="@drawable/status_dot" />
 
             <View
-                android:layout_width="8dp"
+                android:layout_width="12dp"
                 android:layout_height="0dp" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:fontFamily="sans-serif"
-                android:letterSpacing="0.08"
-                android:text="SightLock Active"
-                android:textColor="#80FFFFFF"
-                android:textSize="12sp" />
+                android:fontFamily="sans-serif-medium"
+                android:letterSpacing="0.1"
+                android:text="SYSTEM LOCKED"
+                android:textColor="#FF003C"
+                android:textSize="12sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
     </LinearLayout>
@@ -130,8 +133,8 @@
         android:layout_width="match_parent"
         android:layout_height="2dp"
         android:layout_gravity="bottom"
-        android:layout_marginBottom="80dp"
-        android:layout_marginHorizontal="48dp"
+        android:layout_marginBottom="64dp"
+        android:layout_marginHorizontal="64dp"
         android:background="@drawable/bottom_line_gradient" />
 
     <!-- Bottom brand text -->
@@ -139,11 +142,11 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="48dp"
-        android:fontFamily="sans-serif-light"
-        android:letterSpacing="0.25"
+        android:layout_marginBottom="32dp"
+        android:fontFamily="sans-serif-black"
+        android:letterSpacing="0.4"
         android:text="SIGHTLOCK"
-        android:textColor="#40FFFFFF"
-        android:textSize="12sp" />
+        android:textColor="#33FFFFFF"
+        android:textSize="14sp" />
 
 </FrameLayout>

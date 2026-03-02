@@ -3,7 +3,7 @@
     <!-- Outer glow ring -->
     <item>
         <shape android:shape="oval">
-            <solid android:color="#30FF4444" />
+            <solid android:color="#26FF003C" />
             <size android:width="120dp" android:height="120dp" />
         </shape>
     </item>
@@ -14,7 +14,7 @@
         android:right="10dp"
         android:bottom="10dp">
         <shape android:shape="oval">
-            <solid android:color="#44FF4444" />
+            <solid android:color="#4DFF003C" />
         </shape>
     </item>
     <!-- Core circle -->
@@ -27,10 +27,10 @@
             <gradient
                 android:type="radial"
                 android:centerX="0.5"
-                android:centerY="0.4"
-                android:gradientRadius="50"
-                android:startColor="#FFEF4444"
-                android:endColor="#FFCC2233" />
+                android:centerY="0.5"
+                android:gradientRadius="60"
+                android:startColor="#FFFF003C"
+                android:endColor="#BF80001E" />
         </shape>
     </item>
 </layer-list>
