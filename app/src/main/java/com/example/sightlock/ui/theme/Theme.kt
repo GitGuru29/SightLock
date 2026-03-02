@@ -10,34 +10,29 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 
 private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
-    onPrimary = Color.White,
-    onSecondary = Color.White,
+    primary = NeonCyan,
+    secondary = SecureGreen,
+    tertiary = AlertRed,
+    background = SpaceBlack,
+    surface = DeepGray,
+    onPrimary = SpaceBlack,
+    onSecondary = SpaceBlack,
     onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    onBackground = TextPrimary,
+    onSurface = TextPrimary
 )
+
+// Force dark mode for the Cyber-Security aesthetic
+private val LightColorScheme = DarkColorScheme
 
 @Composable
 fun SightLockTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
+    darkTheme: Boolean = true, // Force dark theme
     // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
+    dynamicColor: Boolean = false, // Disable dynamic color to maintain neon theme
     content: @Composable () -> Unit
 ) {
     val colorScheme = when {

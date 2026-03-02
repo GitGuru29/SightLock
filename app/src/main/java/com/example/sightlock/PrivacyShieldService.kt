@@ -16,6 +16,9 @@ import android.hardware.SensorManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -258,6 +261,7 @@ class PrivacyShieldService : LifecycleService() {
         ContextCompat.getMainExecutor(this@PrivacyShieldService).execute {
             if (isThreat) {
                 if (!isOverlayShowing) {
+                    triggerWarningVibration()
                     showOverlay()
                     faceAnalyzer?.setInterval(OVERLAY_ANALYSIS_INTERVAL_MS)
                 }
@@ -267,6 +271,30 @@ class PrivacyShieldService : LifecycleService() {
                     faceAnalyzer?.setInterval(NORMAL_ANALYSIS_INTERVAL_MS)
                 }
             }
+        }
+    }
+
+    private fun triggerWarningVibration() {
+        try {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vibratorManager.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                // Two quick pulses
+                val timings = longArrayOf(0, 150, 100, 150)
+                val amplitudes = intArrayOf(0, VibrationEffect.DEFAULT_AMPLITUDE, 0, VibrationEffect.DEFAULT_AMPLITUDE)
+                vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(longArrayOf(0, 150, 100, 150), -1)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to vibrate", e)
         }
     }
 
@@ -459,14 +487,19 @@ class PrivacyShieldService : LifecycleService() {
         private var lastAnalyzedTimestamp = 0L
 
         // Liveness tracking
-        private val faceHistory = mutableListOf<android.graphics.PointF>() // centroid history for "extra" faces
+        data class FaceLivenessData(
+            val eulerX: Float,
+            val eulerY: Float,
+            val eulerZ: Float,
+            val leftEye: Float,
+            val rightEye: Float
+        )
+        private val faceHistory = mutableListOf<FaceLivenessData>()
         private var threatConfirmCount = 0
         private var clearCount = 0
 
         companion object {
-            // How far (in pixels) the face centroid needs to drift across HISTORY_FRAMES to count as "live"
-            private const val MIN_MOVEMENT_PX = 6f
-            // Number of past frames to remember per face
+            // Number of past frames to remember per face (using approx 2.5 seconds at 2 FPS)
             private const val HISTORY_FRAMES = 5
             // Consecutive detections of movement required before reporting threat
             private const val CONFIRM_FRAMES = 3
@@ -516,16 +549,19 @@ class PrivacyShieldService : LifecycleService() {
 
             clearCount = 0
 
-            // Liveness: aggregate centroid movement check
-            val centroid = android.graphics.PointF(
-                faces.map { it.boundingBox.exactCenterX() }.average().toFloat(),
-                faces.map { it.boundingBox.exactCenterY() }.average().toFloat()
-            )
-            faceHistory.add(centroid)
+            // Liveness: evaluate 3D rotation and eye blinking instead of 2D translation
+            val avgEulerX = faces.map { it.headEulerAngleX }.average().toFloat()
+            val avgEulerY = faces.map { it.headEulerAngleY }.average().toFloat()
+            val avgEulerZ = faces.map { it.headEulerAngleZ }.average().toFloat()
+            val avgLeftEye = faces.map { it.leftEyeOpenProbability ?: 0.5f }.average().toFloat()
+            val avgRightEye = faces.map { it.rightEyeOpenProbability ?: 0.5f }.average().toFloat()
+
+            val livenessData = FaceLivenessData(avgEulerX, avgEulerY, avgEulerZ, avgLeftEye, avgRightEye)
+            faceHistory.add(livenessData)
             if (faceHistory.size > HISTORY_FRAMES) faceHistory.removeAt(0)
 
-            if (!isMovementDetected()) {
-                Log.d(TAG, "No movement — likely a photo, ignoring.")
+            if (!isLiveFace()) {
+                Log.d(TAG, "No 3D/Eye movement — likely a photo, ignoring.")
                 threatConfirmCount = 0
                 return
             }
@@ -561,15 +597,34 @@ class PrivacyShieldService : LifecycleService() {
             }
         }
 
-        private fun isMovementDetected(): Boolean {
+        private fun isLiveFace(): Boolean {
             if (faceHistory.size < 2) return false
-            var totalMovement = 0f
-            for (i in 1 until faceHistory.size) {
-                val dx = faceHistory[i].x - faceHistory[i - 1].x
-                val dy = faceHistory[i].y - faceHistory[i - 1].y
-                totalMovement += kotlin.math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+            var maxEulerX = -999f
+            var minEulerX = 999f
+            var maxEulerY = -999f
+            var minEulerY = 999f
+            var maxEye = -999f
+            var minEye = 999f
+
+            for (data in faceHistory) {
+                if (data.eulerX > maxEulerX) maxEulerX = data.eulerX
+                if (data.eulerX < minEulerX) minEulerX = data.eulerX
+                if (data.eulerY > maxEulerY) maxEulerY = data.eulerY
+                if (data.eulerY < minEulerY) minEulerY = data.eulerY
+                
+                val avgEye = (data.leftEye + data.rightEye) / 2f
+                if (avgEye > maxEye) maxEye = avgEye
+                if (avgEye < minEye) minEye = avgEye
             }
-            return totalMovement >= MIN_MOVEMENT_PX
+
+            val eulerXVar = maxEulerX - minEulerX
+            val eulerYVar = maxEulerY - minEulerY
+            val eyeVar = maxEye - minEye
+
+            // A live face will exhibit at least one of these over 5 frames (2.5 seconds):
+            // 1. Natural 3D head turning/pitching (EulerX or EulerY change > 1.0 degrees)
+            // 2. Eye blinking/flutter (Eye open probability change > 0.05)
+            return (eulerXVar > 1.0f || eulerYVar > 1.0f || eyeVar > 0.05f)
         }
     }
 }
